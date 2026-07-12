@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from '@/context/AuthContext'
 import { ToastProvider } from '@/context/ToastContext'
+import { SettingsProvider } from '@/context/SettingsContext'
 import AppLayout from '@/components/layout/AppLayout'
 import ProtectedRoute from '@/components/layout/ProtectedRoute'
 import LoginPage from '@/pages/LoginPage'
@@ -16,6 +17,7 @@ import UnauthorizedPage from '@/pages/UnauthorizedPage'
 
 export default function App() {
   return (
+    <SettingsProvider>
     <AuthProvider>
       <ToastProvider>
       <Routes>
@@ -97,5 +99,6 @@ export default function App() {
       </Routes>
       </ToastProvider>
     </AuthProvider>
+    </SettingsProvider>
   )
 }

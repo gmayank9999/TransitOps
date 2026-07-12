@@ -11,7 +11,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { extractError, formatCurrency } from '@/lib/utils'
-import type { MaintenanceLog, MaintenanceStatus } from '@/types'
+import type { MaintenanceLog, MaintenanceStatus, Vehicle } from '@/types'
 
 // ------------------------------------------------------------------ //
 // Zod schema
@@ -120,6 +120,15 @@ export default function MaintenancePage() {
 
   const canManage = hasRole('FLEET_MANAGER', 'ADMIN')
 
+  // Vehicle lookup
+  const { data: allVehicles } = useQuery({
+    queryKey: ['vehicles-lookup'],
+    queryFn: () => vehiclesApi.list({ limit: 1000 }).then(r => r.data.items),
+    staleTime: 60_000,
+  })
+  const vehicleMap = new Map<number, Vehicle>()
+  allVehicles?.forEach(v => vehicleMap.set(v.id, v))
+
   const { data, isLoading } = useQuery({
     queryKey: ['maintenance', page, statusFilter],
     queryFn: () => maintenanceApi.list({
@@ -187,7 +196,19 @@ export default function MaintenancePage() {
                 {data?.items.map(m => (
                   <tr key={m.id}>
                     <td className="font-mono text-xs">#{m.id}</td>
-                    <td className="font-mono text-xs">#{m.vehicle_id}</td>
+                    <td>
+                      {(() => {
+                        const v = vehicleMap.get(m.vehicle_id)
+                        return v ? (
+                          <div>
+                            <span className="font-mono text-xs font-semibold">{v.registration_number}</span>
+                            <p className="text-[10px] text-on-surface-variant">{v.name_model}</p>
+                          </div>
+                        ) : (
+                          <span className="font-mono text-xs">#{m.vehicle_id}</span>
+                        )
+                      })()}
+                    </td>
                     <td className="text-sm">{m.description}</td>
                     <td className="text-sm">{formatCurrency(Number(m.cost))}</td>
                     <td className="text-sm text-on-surface-variant">{new Date(m.opened_at).toLocaleDateString()}</td>

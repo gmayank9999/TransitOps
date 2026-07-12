@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Truck,
@@ -5,7 +6,6 @@ import {
   Route,
   TrendingUp,
   Activity,
-  Plus,
   PlusCircle,
   Send,
   CheckCircle,
@@ -17,6 +17,11 @@ import {
   Droplets,
   DollarSign,
   Info,
+  Filter,
+  Gauge,
+  CircleParking,
+  Wrench,
+  Clock,
 } from 'lucide-react'
 import {
   BarChart,
@@ -30,9 +35,11 @@ import {
   Pie,
   Cell,
 } from 'recharts'
-import { dashboardApi, reportsApi } from '@/api'
+import { dashboardApi, reportsApi, tripsApi, vehiclesApi, driversApi } from '@/api'
 import { useAuth } from '@/context/AuthContext'
 import { formatDistanceToNow } from '@/lib/utils'
+import { StatusBadge } from '@/components/ui/StatusBadge'
+import type { Vehicle, Driver } from '@/types'
 
 // ------------------------------------------------------------------ //
 // KPI Card
@@ -42,22 +49,17 @@ interface KpiCardProps {
   value: number | string
   icon: React.ElementType
   iconBg: string
+  cardBg?: string
   sub?: string
-  trend?: { value: string; up: boolean }
 }
 
-function KpiCard({ label, value, icon: Icon, iconBg, sub, trend }: KpiCardProps) {
+function KpiCard({ label, value, icon: Icon, iconBg, cardBg, sub }: KpiCardProps) {
   return (
-    <div className="card card-hover p-5 animate-slide-up">
-      <div className="flex items-start justify-between mb-4">
-        <div className={`w-10 h-10 rounded-full ${iconBg} flex items-center justify-center flex-shrink-0`}>
+    <div className={`card card-hover p-5 animate-slide-up ${cardBg ?? ''}`}>
+      <div className="flex items-start justify-between mb-3">
+        <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center flex-shrink-0`}>
           <Icon className="w-5 h-5" />
         </div>
-        {trend && (
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${trend.up ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-            {trend.up ? '+' : ''}{trend.value}
-          </span>
-        )}
       </div>
       <p className="text-2xl font-display font-bold text-on-surface">{value}</p>
       <p className="text-sm font-medium text-on-surface mt-0.5">{label}</p>
@@ -86,6 +88,7 @@ const ACTIVITY_ICONS: Record<string, React.ElementType> = {
 }
 
 const VEHICLE_PIE_COLORS = ['#006973', '#650cd9', '#952a00', '#ba1a1a']
+const VEHICLE_TYPES = ['Truck', 'Van', 'Mini-Truck', 'Pickup', 'Rickshaw', 'Bus', 'Other']
 
 // ------------------------------------------------------------------ //
 // Dashboard page
@@ -93,9 +96,19 @@ const VEHICLE_PIE_COLORS = ['#006973', '#650cd9', '#952a00', '#ba1a1a']
 export default function DashboardPage() {
   const { user } = useAuth()
 
+  // Filters
+  const [vehicleType, setVehicleType] = useState('')
+  const [region, setRegion] = useState('')
+
   const { data: kpis, isLoading: kpisLoading } = useQuery({
-    queryKey: ['dashboard-kpis'],
-    queryFn: () => dashboardApi.kpis().then((r) => r.data),
+    queryKey: ['dashboard-kpis', vehicleType, region],
+    queryFn: () =>
+      dashboardApi
+        .kpis({
+          ...(vehicleType && { vehicle_type: vehicleType }),
+          ...(region && { region }),
+        })
+        .then((r) => r.data),
     refetchInterval: 15_000,
   })
 
@@ -110,6 +123,33 @@ export default function DashboardPage() {
     queryFn: () => reportsApi.monthlyRevenue().then((r) => r.data),
   })
 
+  // Recent trips
+  const { data: recentTrips } = useQuery({
+    queryKey: ['recent-trips'],
+    queryFn: () => tripsApi.list({ limit: 8, page: 1 }).then((r) => r.data),
+    refetchInterval: 15_000,
+  })
+
+  // Vehicle/driver lookups for resolving IDs in recent trips
+  const { data: allVehicles } = useQuery({
+    queryKey: ['vehicles-lookup'],
+    queryFn: () => vehiclesApi.list({ limit: 1000 }).then((r) => r.data.items),
+    staleTime: 60_000,
+  })
+  const { data: allDrivers } = useQuery({
+    queryKey: ['drivers-lookup'],
+    queryFn: () => driversApi.list({ limit: 1000 }).then((r) => r.data.items),
+    staleTime: 60_000,
+  })
+
+  const vehicleMap = new Map<number, Vehicle>()
+  allVehicles?.forEach((v) => vehicleMap.set(v.id, v))
+  const driverMap = new Map<number, Driver>()
+  allDrivers?.forEach((d) => driverMap.set(d.id, d))
+
+  // Get unique regions from vehicles
+  const regions = [...new Set((allVehicles ?? []).map((v) => v.region).filter(Boolean))] as string[]
+
   const vehiclePieData = kpis
     ? [
         { name: 'Available', value: kpis.vehicles.available },
@@ -123,7 +163,7 @@ export default function DashboardPage() {
     return (
       <div className="flex-1 p-8">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          {[...Array(4)].map((_, i) => (
+          {[...Array(8)].map((_, i) => (
             <div key={i} className="card p-5 h-32 animate-pulse bg-surface-mid" />
           ))}
         </div>
@@ -134,11 +174,53 @@ export default function DashboardPage() {
   return (
     <div className="flex-1 p-6 lg:p-8 animate-fade-in">
       {/* Page header */}
-      <div className="mb-8">
-        <h2 className="font-display text-headline-lg text-on-surface">Dashboard</h2>
-        <p className="text-sm text-on-surface-variant mt-1">
-          Good {getGreeting()}, {user?.full_name?.split(' ')[0]}. Here's what's happening with your fleet.
-        </p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="font-display text-headline-lg text-on-surface">Dashboard</h2>
+          <p className="text-sm text-on-surface-variant mt-1">
+            Good {getGreeting()}, {user?.full_name?.split(' ')[0]}. Here's what's happening with your fleet.
+          </p>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="card p-4 mb-6 flex flex-wrap gap-3 items-center">
+        <Filter className="w-4 h-4 text-on-surface-variant" />
+        <select
+          value={vehicleType}
+          onChange={(e) => setVehicleType(e.target.value)}
+          className="px-3 py-2 rounded-lg border border-outline-variant text-sm bg-white focus:border-primary outline-none"
+        >
+          <option value="">All Vehicle Types</option>
+          {VEHICLE_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <select
+          value={region}
+          onChange={(e) => setRegion(e.target.value)}
+          className="px-3 py-2 rounded-lg border border-outline-variant text-sm bg-white focus:border-primary outline-none"
+        >
+          <option value="">All Regions</option>
+          {regions.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        {(vehicleType || region) && (
+          <button
+            onClick={() => {
+              setVehicleType('')
+              setRegion('')
+            }}
+            className="text-xs text-primary hover:underline font-medium"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {/* Hero KPI banner */}
@@ -150,40 +232,68 @@ export default function DashboardPage() {
             <p className="text-xs opacity-70 mt-1">Vehicles currently on active trips</p>
           </div>
           <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center">
-            <TrendingUp className="w-8 h-8 text-white" />
+            <Gauge className="w-8 h-8 text-white" />
           </div>
         </div>
       </div>
 
-      {/* KPI cards grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* 8 KPI cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <KpiCard
           label="Total Vehicles"
           value={kpis?.vehicles.total ?? 0}
           icon={Truck}
-          iconBg="bg-primary/10 text-primary"
-          sub={`${kpis?.vehicles.available ?? 0} available`}
+          iconBg="bg-blue-100 text-blue-600"
+          sub={`${kpis?.vehicles.retired ?? 0} retired`}
+        />
+        <KpiCard
+          label="Active Vehicles"
+          value={kpis?.vehicles.on_trip ?? 0}
+          icon={Route}
+          iconBg="bg-emerald-100 text-emerald-600"
+          sub="Currently on trips"
+        />
+        <KpiCard
+          label="Available Vehicles"
+          value={kpis?.vehicles.available ?? 0}
+          icon={CircleParking}
+          iconBg="bg-teal-100 text-teal-600"
+          sub="Ready for dispatch"
+        />
+        <KpiCard
+          label="In Maintenance"
+          value={kpis?.vehicles.in_shop ?? 0}
+          icon={Wrench}
+          iconBg="bg-orange-100 text-orange-600"
+          sub="Under repair"
         />
         <KpiCard
           label="Active Trips"
           value={kpis?.trips.active ?? 0}
-          icon={Route}
-          iconBg="bg-secondary/10 text-secondary"
-          sub={`${kpis?.trips.pending ?? 0} pending dispatch`}
+          icon={Send}
+          iconBg="bg-purple-100 text-purple-600"
+          sub="Currently dispatched"
+        />
+        <KpiCard
+          label="Pending Trips"
+          value={kpis?.trips.pending ?? 0}
+          icon={Clock}
+          iconBg="bg-amber-100 text-amber-600"
+          sub="Awaiting dispatch"
         />
         <KpiCard
           label="Drivers on Duty"
           value={(kpis?.drivers.on_trip ?? 0) + (kpis?.drivers.available ?? 0)}
           icon={Users}
-          iconBg="bg-amber-50 text-amber-600"
-          sub={`${kpis?.drivers.on_trip ?? 0} currently on trip`}
+          iconBg="bg-indigo-100 text-indigo-600"
+          sub={`${kpis?.drivers.on_trip ?? 0} on trip, ${kpis?.drivers.available ?? 0} available`}
         />
         <KpiCard
-          label="Vehicles In Shop"
-          value={kpis?.vehicles.in_shop ?? 0}
-          icon={Activity}
-          iconBg="bg-error/10 text-error"
-          sub="Under maintenance"
+          label="Completed Trips"
+          value={kpis?.trips.completed ?? 0}
+          icon={CheckCircle}
+          iconBg="bg-green-100 text-green-600"
+          sub="Successfully delivered"
         />
       </div>
 
@@ -193,7 +303,7 @@ export default function DashboardPage() {
         <div className="card p-5 lg:col-span-2">
           <h3 className="font-display font-semibold text-base text-on-surface mb-4">Monthly Revenue</h3>
           {monthlyRevenue && monthlyRevenue.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height={220}>
               <BarChart data={monthlyRevenue} barSize={28}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e8eeff" vertical={false} />
                 <XAxis
@@ -224,7 +334,7 @@ export default function DashboardPage() {
 
         {/* Vehicle status pie */}
         <div className="card p-5">
-          <h3 className="font-display font-semibold text-base text-on-surface mb-4">Fleet Status</h3>
+          <h3 className="font-display font-semibold text-base text-on-surface mb-4">Vehicle Status</h3>
           {vehiclePieData.length > 0 ? (
             <>
               <ResponsiveContainer width="100%" height={160}>
@@ -242,9 +352,7 @@ export default function DashboardPage() {
                       <Cell key={index} fill={VEHICLE_PIE_COLORS[index % VEHICLE_PIE_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip
-                    contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                  />
+                  <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-1.5 mt-2">
@@ -268,6 +376,65 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Recent Trips Table */}
+      <div className="card p-5 mb-6">
+        <h3 className="font-display font-semibold text-base text-on-surface mb-4">Recent Trips</h3>
+        {recentTrips && recentTrips.items.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Trip ID</th>
+                  <th>Vehicle</th>
+                  <th>Driver</th>
+                  <th>Route</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentTrips.items.map((t) => {
+                  const vehicle = t.vehicle_id ? vehicleMap.get(t.vehicle_id) : null
+                  const driver = t.driver_id ? driverMap.get(t.driver_id) : null
+                  return (
+                    <tr key={t.id}>
+                      <td className="font-mono text-xs font-semibold">#{t.id}</td>
+                      <td className="text-sm">
+                        {vehicle ? (
+                          <span className="font-mono text-xs">{vehicle.registration_number}</span>
+                        ) : (
+                          <span className="text-xs text-on-surface-variant italic">Unassigned</span>
+                        )}
+                      </td>
+                      <td className="text-sm">
+                        {driver ? (
+                          <span>{driver.full_name}</span>
+                        ) : (
+                          <span className="text-xs text-on-surface-variant italic">Unassigned</span>
+                        )}
+                      </td>
+                      <td className="text-sm text-on-surface-variant">
+                        {t.source} → {t.destination}
+                      </td>
+                      <td>
+                        <StatusBadge status={t.status} type="trip" />
+                      </td>
+                      <td className="text-xs text-on-surface-variant">
+                        {formatDistanceToNow(t.created_at)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="h-24 flex items-center justify-center text-sm text-on-surface-variant">
+            No trips yet — create a trip to see it here.
+          </div>
+        )}
       </div>
 
       {/* Activity timeline */}

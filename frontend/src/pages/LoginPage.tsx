@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -15,13 +15,18 @@ const loginSchema = z.object({
 type LoginForm = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { login, isAuthenticated, isLoading } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [showPassword, setShowPassword] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const [isLocked, setIsLocked] = useState(false)
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard'
+
+  // If already logged in, redirect away from login page
+  if (!isLoading && isAuthenticated) {
+    return <Navigate to="/dashboard" replace />
+  }
 
   const {
     register,
@@ -35,15 +40,22 @@ export default function LoginPage() {
     try {
       await login(data.email, data.password, data.rememberMe)
       navigate(from, { replace: true })
-    } catch (err) {
-      const axiosErr = err as AxiosError<{ detail: string }>
-      const status = axiosErr.response?.status
-      const detail = axiosErr.response?.data?.detail ?? 'Something went wrong. Please try again.'
-      if (status === 423) {
-        setIsLocked(true)
-        setServerError(detail)
+    } catch (err: unknown) {
+      if (err instanceof AxiosError) {
+        const status = err.response?.status
+        const detail = err.response?.data?.detail ?? 'Invalid email or password.'
+        if (status === 423) {
+          setIsLocked(true)
+          setServerError(detail)
+        } else if (status === 401) {
+          setServerError(detail)
+        } else if (status && status >= 500) {
+          setServerError('Server error — please make sure the backend is running.')
+        } else {
+          setServerError(detail)
+        }
       } else {
-        setServerError(detail)
+        setServerError('Network error — could not reach the server. Check your connection.')
       }
     }
   }
