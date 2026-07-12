@@ -1,4 +1,8 @@
-import { Settings, Shield, MapPin, DollarSign, Ruler } from 'lucide-react'
+import { useState } from 'react'
+import { Settings, Shield, DollarSign, Ruler, Moon, Sun, Check } from 'lucide-react'
+import { useSettings } from '@/context/SettingsContext'
+import { useToast } from '@/context/ToastContext'
+import type { UserRole } from '@/types'
 
 const RBAC_MATRIX = [
   { module: 'Dashboard', FLEET_MANAGER: true, DISPATCHER: true, SAFETY_OFFICER: true, FINANCIAL_ANALYST: true },
@@ -20,6 +24,21 @@ const ROLE_LABELS: Record<RoleName, string> = {
 }
 
 export default function SettingsPage() {
+  const { settings, updateSettings, toggleTheme } = useSettings()
+  const { success } = useToast()
+
+  const [depotName, setDepotName] = useState(settings.depotName)
+  const [currency, setCurrency] = useState(settings.currency)
+  const [distanceUnit, setDistanceUnit] = useState(settings.distanceUnit)
+  const [saved, setSaved] = useState(false)
+
+  const handleSave = () => {
+    updateSettings({ depotName, currency, distanceUnit })
+    success('Settings saved successfully!')
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
   return (
     <div className="flex-1 p-6 lg:p-8 animate-fade-in">
       <div className="mb-8">
@@ -41,7 +60,8 @@ export default function SettingsPage() {
                 <input
                   id="setting-depot-name"
                   type="text"
-                  defaultValue="TransitOps HQ"
+                  value={depotName}
+                  onChange={(e) => setDepotName(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-outline-variant text-sm text-on-surface bg-white focus:border-primary focus:ring-1 focus:ring-primary/30 outline-none transition-colors"
                 />
               </div>
@@ -52,7 +72,8 @@ export default function SettingsPage() {
                 </label>
                 <select
                   id="setting-currency"
-                  defaultValue="INR"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as 'INR' | 'USD')}
                   className="w-full px-3 py-2 rounded-lg border border-outline-variant text-sm text-on-surface bg-white focus:border-primary outline-none"
                 >
                   <option value="INR">INR (Indian Rupee ₹)</option>
@@ -66,7 +87,8 @@ export default function SettingsPage() {
                 </label>
                 <select
                   id="setting-distance-unit"
-                  defaultValue="km"
+                  value={distanceUnit}
+                  onChange={(e) => setDistanceUnit(e.target.value as 'km' | 'mi')}
                   className="w-full px-3 py-2 rounded-lg border border-outline-variant text-sm text-on-surface bg-white focus:border-primary outline-none"
                 >
                   <option value="km">Kilometers (km)</option>
@@ -75,9 +97,57 @@ export default function SettingsPage() {
               </div>
               <button
                 id="btn-save-settings"
-                className="w-full py-2 px-4 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-container transition-colors"
+                onClick={handleSave}
+                className={`w-full py-2 px-4 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 ${
+                  saved
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-primary text-white hover:bg-primary-container'
+                }`}
               >
-                Save Changes
+                {saved ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Saved!
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Theme Toggle */}
+          <div className="card p-5">
+            <div className="flex items-center gap-2 mb-4">
+              {settings.theme === 'dark' ? <Moon className="w-4 h-4 text-primary" /> : <Sun className="w-4 h-4 text-primary" />}
+              <h3 className="font-semibold text-sm text-on-surface">Appearance</h3>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-on-surface">
+                  {settings.theme === 'dark' ? 'Dark Mode' : 'Light Mode'}
+                </p>
+                <p className="text-xs text-on-surface-variant mt-0.5">
+                  Toggle between light and dark theme
+                </p>
+              </div>
+              <button
+                onClick={toggleTheme}
+                className={`relative w-12 h-6 rounded-full transition-colors duration-200 ${
+                  settings.theme === 'dark' ? 'bg-primary' : 'bg-outline-variant'
+                }`}
+              >
+                <div
+                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 flex items-center justify-center ${
+                    settings.theme === 'dark' ? 'translate-x-6' : 'translate-x-0.5'
+                  }`}
+                >
+                  {settings.theme === 'dark' ? (
+                    <Moon className="w-3 h-3 text-primary" />
+                  ) : (
+                    <Sun className="w-3 h-3 text-amber-500" />
+                  )}
+                </div>
               </button>
             </div>
           </div>
@@ -91,7 +161,7 @@ export default function SettingsPage() {
               <h3 className="font-semibold text-sm text-on-surface">Role Permissions Matrix</h3>
             </div>
             <p className="text-xs text-on-surface-variant mb-4">
-              This matrix reflects the current access control rules enforced server-side. Making it live-editable is a stretch goal (see roadmap).
+              Access control rules enforced server-side for each role.
             </p>
             <div className="overflow-x-auto">
               <table className="data-table">
@@ -110,7 +180,7 @@ export default function SettingsPage() {
                       {(Object.keys(ROLE_LABELS) as RoleName[]).map((r) => (
                         <td key={r} className="text-center">
                           {row[r] ? (
-                            <span className="inline-block w-4 h-4 rounded-sm bg-status-available-bg text-status-available text-[10px] font-bold flex items-center justify-center mx-auto">✓</span>
+                            <span className="inline-flex w-5 h-5 rounded bg-emerald-100 text-emerald-600 text-[10px] font-bold items-center justify-center mx-auto">✓</span>
                           ) : (
                             <span className="text-outline text-xs">—</span>
                           )}

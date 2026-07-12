@@ -16,7 +16,7 @@ from app.services import driver_service
 router = APIRouter()
 
 _SAFETY_ROLES = (UserRole.SAFETY_OFFICER, UserRole.FLEET_MANAGER, UserRole.ADMIN)
-_SAFETY_ONLY = (UserRole.SAFETY_OFFICER, UserRole.ADMIN)
+_SAFETY_ONLY = (UserRole.SAFETY_OFFICER, UserRole.FLEET_MANAGER, UserRole.ADMIN)
 
 
 @router.get("", response_model=PaginatedDrivers)

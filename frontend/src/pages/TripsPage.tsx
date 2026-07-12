@@ -12,7 +12,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { extractError, formatCurrency } from '@/lib/utils'
-import type { Trip, TripStatus } from '@/types'
+import type { Trip, TripStatus, Vehicle, Driver } from '@/types'
 
 // ------------------------------------------------------------------ //
 // Zod schemas
@@ -69,15 +69,20 @@ function TripModal({ trip, onClose }: { trip: Trip | null, onClose: () => void }
     } : {}
   })
 
-  // Fetch available resources
+  // Fetch available resources — only AVAILABLE vehicles (no retired/in-shop)
   const { data: vehicles } = useQuery({
     queryKey: ['vehicles', 'AVAILABLE'],
     queryFn: () => vehiclesApi.list({ status: 'AVAILABLE', limit: 1000 }).then(r => r.data.items),
   })
   
+  // Filter out expired license and suspended drivers
   const { data: drivers } = useQuery({
     queryKey: ['drivers', 'AVAILABLE'],
     queryFn: () => driversApi.list({ status: 'AVAILABLE', limit: 1000 }).then(r => r.data.items),
+    select: (items) => items.filter(d => {
+      const expiryDate = new Date(d.license_expiry_date)
+      return expiryDate >= new Date() // exclude expired licenses
+    }),
   })
 
   const mutationFn = isEdit 
@@ -145,11 +150,8 @@ function TripModal({ trip, onClose }: { trip: Trip | null, onClose: () => void }
                 <label className="block text-xs font-medium text-on-surface-variant mb-1.5"><Truck className="w-3 h-3 inline mr-1"/>Vehicle</label>
                 <select {...register('vehicle_id')} className="w-full px-3 py-2 rounded-lg border border-outline-variant text-sm bg-white focus:border-primary outline-none">
                   <option value="">Unassigned</option>
-                  {isEdit && trip.vehicle_id && !vehicles?.find(v => v.id === trip.vehicle_id) && (
-                     <option value={trip.vehicle_id}>Current Vehicle #{trip.vehicle_id}</option>
-                  )}
                   {vehicles?.map(v => (
-                    <option key={v.id} value={v.id}>{v.registration_number} ({v.max_load_capacity_kg}kg)</option>
+                    <option key={v.id} value={v.id}>{v.registration_number} — {v.name_model} ({v.max_load_capacity_kg}kg)</option>
                   ))}
                 </select>
               </div>
@@ -157,11 +159,8 @@ function TripModal({ trip, onClose }: { trip: Trip | null, onClose: () => void }
                 <label className="block text-xs font-medium text-on-surface-variant mb-1.5"><User className="w-3 h-3 inline mr-1"/>Driver</label>
                 <select {...register('driver_id')} className="w-full px-3 py-2 rounded-lg border border-outline-variant text-sm bg-white focus:border-primary outline-none">
                   <option value="">Unassigned</option>
-                  {isEdit && trip.driver_id && !drivers?.find(d => d.id === trip.driver_id) && (
-                     <option value={trip.driver_id}>Current Driver #{trip.driver_id}</option>
-                  )}
                   {drivers?.map(d => (
-                    <option key={d.id} value={d.id}>{d.full_name} (Score: {d.safety_score})</option>
+                    <option key={d.id} value={d.id}>{d.full_name} — {d.license_number} (Score: {d.safety_score})</option>
                   ))}
                 </select>
               </div>
@@ -330,6 +329,23 @@ export default function TripsPage() {
     }).then(r => r.data)
   })
 
+  // Fetch vehicle/driver lookup for name resolution
+  const { data: allVehicles } = useQuery({
+    queryKey: ['vehicles-lookup'],
+    queryFn: () => vehiclesApi.list({ limit: 1000 }).then(r => r.data.items),
+    staleTime: 60_000,
+  })
+  const { data: allDrivers } = useQuery({
+    queryKey: ['drivers-lookup'],
+    queryFn: () => driversApi.list({ limit: 1000 }).then(r => r.data.items),
+    staleTime: 60_000,
+  })
+
+  const vehicleMap = new Map<number, Vehicle>()
+  allVehicles?.forEach(v => vehicleMap.set(v.id, v))
+  const driverMap = new Map<number, Driver>()
+  allDrivers?.forEach(d => driverMap.set(d.id, d))
+
   const dispatchMutation = useMutation({
     mutationFn: (id: number) => tripsApi.dispatch(id),
     onSuccess: () => {
@@ -388,51 +404,63 @@ export default function TripsPage() {
                 </tr>
               </thead>
               <tbody>
-                {data?.items.map(t => (
-                  <tr key={t.id}>
-                    <td className="font-mono text-xs">#{t.id}</td>
-                    <td>
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="truncate max-w-[120px]">{t.source}</span>
-                        <ChevronRight className="w-3 h-3 text-on-surface-variant" />
-                        <span className="truncate max-w-[120px]">{t.destination}</span>
-                      </div>
-                    </td>
-                    <td>
-                      {t.vehicle_id ? <span className="font-mono text-xs">#{t.vehicle_id}</span> : <span className="text-xs text-on-surface-variant italic">Unassigned</span>}
-                    </td>
-                    <td>
-                      {t.driver_id ? <span className="font-mono text-xs">#{t.driver_id}</span> : <span className="text-xs text-on-surface-variant italic">Unassigned</span>}
-                    </td>
-                    <td className="text-sm">
-                      {Number(t.cargo_weight_kg)} kg / {Number(t.planned_distance_km)} km
-                    </td>
-                    <td>
-                      <StatusBadge status={t.status} type="trip" />
-                      {t.assignment_label && t.status === 'DRAFT' && (
-                         <div className="text-[10px] text-amber-500 mt-1">{t.assignment_label}</div>
-                      )}
-                    </td>
-                    {canManage && (
+                {data?.items.map(t => {
+                  const vehicle = t.vehicle_id ? vehicleMap.get(t.vehicle_id) : null
+                  const driver = t.driver_id ? driverMap.get(t.driver_id) : null
+                  return (
+                    <tr key={t.id}>
+                      <td className="font-mono text-xs">#{t.id}</td>
                       <td>
-                        <div className="flex items-center gap-1">
-                          {t.status === 'DRAFT' && (
-                            <>
-                              <button onClick={() => setModalTrip(t)} title="Edit Draft" className="p-1.5 rounded hover:bg-surface-mid text-on-surface-variant hover:text-primary"><Edit className="w-4 h-4"/></button>
-                              <button onClick={() => dispatchMutation.mutate(t.id)} title="Dispatch" className="p-1.5 rounded hover:bg-status-on-trip-bg text-on-surface-variant hover:text-status-on-trip"><PlayCircle className="w-4 h-4"/></button>
-                            </>
-                          )}
-                          {t.status === 'DISPATCHED' && (
-                            <button onClick={() => setCompleteTripId(t.id)} title="Complete" className="p-1.5 rounded hover:bg-status-available-bg text-on-surface-variant hover:text-status-available"><CheckCircle className="w-4 h-4"/></button>
-                          )}
-                          {(t.status === 'DRAFT' || t.status === 'DISPATCHED') && (
-                            <button onClick={() => setCancelTripId(t.id)} title="Cancel" className="p-1.5 rounded hover:bg-error/10 text-on-surface-variant hover:text-error"><XCircle className="w-4 h-4"/></button>
-                          )}
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="truncate max-w-[120px]">{t.source}</span>
+                          <ChevronRight className="w-3 h-3 text-on-surface-variant" />
+                          <span className="truncate max-w-[120px]">{t.destination}</span>
                         </div>
                       </td>
-                    )}
-                  </tr>
-                ))}
+                      <td>
+                        {vehicle ? (
+                          <div>
+                            <span className="font-mono text-xs font-semibold">{vehicle.registration_number}</span>
+                            <p className="text-[10px] text-on-surface-variant">{vehicle.name_model}</p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-on-surface-variant italic">Unassigned</span>
+                        )}
+                      </td>
+                      <td>
+                        {driver ? (
+                          <span className="text-sm">{driver.full_name}</span>
+                        ) : (
+                          <span className="text-xs text-on-surface-variant italic">Unassigned</span>
+                        )}
+                      </td>
+                      <td className="text-sm">
+                        {Number(t.cargo_weight_kg)} kg / {Number(t.planned_distance_km)} km
+                      </td>
+                      <td>
+                        <StatusBadge status={t.status} type="trip" />
+                      </td>
+                      {canManage && (
+                        <td>
+                          <div className="flex items-center gap-1">
+                            {t.status === 'DRAFT' && (
+                              <>
+                                <button onClick={() => setModalTrip(t)} title="Edit Draft" className="p-1.5 rounded hover:bg-surface-mid text-on-surface-variant hover:text-primary"><Edit className="w-4 h-4"/></button>
+                                <button onClick={() => dispatchMutation.mutate(t.id)} title="Dispatch" className="p-1.5 rounded hover:bg-status-on-trip-bg text-on-surface-variant hover:text-status-on-trip"><PlayCircle className="w-4 h-4"/></button>
+                              </>
+                            )}
+                            {t.status === 'DISPATCHED' && (
+                              <button onClick={() => setCompleteTripId(t.id)} title="Complete" className="p-1.5 rounded hover:bg-status-available-bg text-on-surface-variant hover:text-status-available"><CheckCircle className="w-4 h-4"/></button>
+                            )}
+                            {(t.status === 'DRAFT' || t.status === 'DISPATCHED') && (
+                              <button onClick={() => setCancelTripId(t.id)} title="Cancel" className="p-1.5 rounded hover:bg-error/10 text-on-surface-variant hover:text-error"><XCircle className="w-4 h-4"/></button>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           )}
@@ -442,8 +470,8 @@ export default function TripsPage() {
           <div className="flex items-center justify-between px-4 py-3 border-t border-outline-variant">
             <p className="text-xs text-on-surface-variant">Page {page} of {totalPages}</p>
             <div className="flex gap-1">
-              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded border"><ChevronLeft className="w-4 h-4" /></button>
-              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded border"><ChevronRight className="w-4 h-4" /></button>
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded border border-outline-variant disabled:opacity-40 hover:bg-surface-mid"><ChevronLeft className="w-4 h-4" /></button>
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded border border-outline-variant disabled:opacity-40 hover:bg-surface-mid"><ChevronRight className="w-4 h-4" /></button>
             </div>
           </div>
         )}

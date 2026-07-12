@@ -10,13 +10,13 @@ import { fuelApi, expensesApi, vehiclesApi } from '@/api'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import { extractError, formatCurrency } from '@/lib/utils'
+import type { Vehicle } from '@/types'
 
 // ------------------------------------------------------------------ //
 // Zod schemas
 // ------------------------------------------------------------------ //
 const fuelSchema = z.object({
   vehicle_id: z.coerce.number().positive('Vehicle is required'),
-  trip_id: z.coerce.number().optional().or(z.literal('')),
   liters: z.coerce.number().positive('Must be > 0'),
   cost: z.coerce.number().min(0, 'Cost cannot be negative'),
 })
@@ -27,6 +27,7 @@ const expenseSchema = z.object({
   category: z.string().min(1, 'Category is required'),
   amount: z.coerce.number().min(0, 'Amount cannot be negative'),
   description: z.string().max(255).optional(),
+  trip_id: z.coerce.number().optional().or(z.literal('')),
 })
 type ExpenseForm = z.infer<typeof expenseSchema>
 
@@ -44,7 +45,7 @@ function FuelModal({ onClose }: { onClose: () => void }) {
   })
 
   const { data: vehicles } = useQuery({
-    queryKey: ['vehicles'],
+    queryKey: ['vehicles-all'],
     queryFn: () => vehiclesApi.list({ limit: 1000 }).then(r => r.data.items),
   })
 
@@ -59,10 +60,7 @@ function FuelModal({ onClose }: { onClose: () => void }) {
   })
 
   const onSubmit = (data: FuelForm) => {
-    mutation.mutate({
-      ...data,
-      trip_id: data.trip_id === '' ? null : Number(data.trip_id)
-    })
+    mutation.mutate(data)
   }
 
   return (
@@ -78,14 +76,10 @@ function FuelModal({ onClose }: { onClose: () => void }) {
             <select {...register('vehicle_id')} className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-primary">
               <option value="">Select vehicle...</option>
               {vehicles?.map(v => (
-                <option key={v.id} value={v.id}>{v.registration_number}</option>
+                <option key={v.id} value={v.id}>{v.registration_number} — {v.name_model}</option>
               ))}
             </select>
             {errors.vehicle_id && <p className="mt-1 text-xs text-error">{errors.vehicle_id.message}</p>}
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1.5">Trip ID (Optional)</label>
-            <input type="number" {...register('trip_id')} className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-primary" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -118,12 +112,15 @@ function ExpenseModal({ onClose }: { onClose: () => void }) {
   })
 
   const { data: vehicles } = useQuery({
-    queryKey: ['vehicles'],
+    queryKey: ['vehicles-all'],
     queryFn: () => vehiclesApi.list({ limit: 1000 }).then(r => r.data.items),
   })
 
   const mutation = useMutation({
-    mutationFn: (data: any) => expensesApi.create(data),
+    mutationFn: (data: any) => {
+      const payload = { ...data, trip_id: data.trip_id === '' ? undefined : data.trip_id }
+      return expensesApi.create(payload)
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['expenses'] })
       success('Expense added')
@@ -147,7 +144,7 @@ function ExpenseModal({ onClose }: { onClose: () => void }) {
             <select {...register('vehicle_id')} className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-primary">
               <option value="">Select vehicle...</option>
               {vehicles?.map(v => (
-                <option key={v.id} value={v.id}>{v.registration_number}</option>
+                <option key={v.id} value={v.id}>{v.registration_number} — {v.name_model}</option>
               ))}
             </select>
             {errors.vehicle_id && <p className="mt-1 text-xs text-error">{errors.vehicle_id.message}</p>}
@@ -165,6 +162,10 @@ function ExpenseModal({ onClose }: { onClose: () => void }) {
               <input type="number" step="0.01" {...register('amount')} className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-primary" />
               {errors.amount && <p className="mt-1 text-xs text-error">{errors.amount.message}</p>}
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1.5">Trip ID (Optional)</label>
+            <input type="number" {...register('trip_id')} placeholder="Link to a trip" className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-primary" />
           </div>
           <div>
             <label className="block text-xs font-medium mb-1.5">Description (Optional)</label>
@@ -193,6 +194,15 @@ export default function FuelExpensesPage() {
 
   const canManage = hasRole('FLEET_MANAGER', 'FINANCIAL_ANALYST', 'ADMIN')
 
+  // Vehicle lookup
+  const { data: allVehicles } = useQuery({
+    queryKey: ['vehicles-lookup'],
+    queryFn: () => vehiclesApi.list({ limit: 1000 }).then(r => r.data.items),
+    staleTime: 60_000,
+  })
+  const vehicleMap = new Map<number, Vehicle>()
+  allVehicles?.forEach(v => vehicleMap.set(v.id, v))
+
   const { data: fuelData, isLoading: fuelLoading } = useQuery({
     queryKey: ['fuel', page],
     queryFn: () => fuelApi.list({ page, limit: 15 }).then(r => r.data),
@@ -208,6 +218,18 @@ export default function FuelExpensesPage() {
   const activeData = tab === 'fuel' ? fuelData : expenseData
   const isLoading = tab === 'fuel' ? fuelLoading : expLoading
   const totalPages = activeData ? Math.ceil(activeData.total / 15) : 1
+
+  const resolveVehicle = (id: number) => {
+    const v = vehicleMap.get(id)
+    return v ? (
+      <div>
+        <span className="font-mono text-xs font-semibold">{v.registration_number}</span>
+        <p className="text-[10px] text-on-surface-variant">{v.name_model}</p>
+      </div>
+    ) : (
+      <span className="font-mono text-xs">#{id}</span>
+    )
+  }
 
   return (
     <div className="flex-1 p-6 lg:p-8 animate-fade-in">
@@ -261,7 +283,6 @@ export default function FuelExpensesPage() {
                   <tr>
                     <th>Date</th>
                     <th>Vehicle</th>
-                    <th>Trip ID</th>
                     <th>Liters</th>
                     <th>Cost</th>
                   </tr>
@@ -270,6 +291,7 @@ export default function FuelExpensesPage() {
                     <th>Date</th>
                     <th>Vehicle</th>
                     <th>Category</th>
+                    <th>Trip ID</th>
                     <th>Description</th>
                     <th>Amount</th>
                   </tr>
@@ -279,8 +301,7 @@ export default function FuelExpensesPage() {
                 {tab === 'fuel' && (activeData?.items as any[]).map((f) => (
                   <tr key={f.id}>
                     <td className="text-sm text-on-surface-variant">{new Date(f.log_date).toLocaleDateString()}</td>
-                    <td className="font-mono text-xs">#{f.vehicle_id}</td>
-                    <td className="font-mono text-xs text-on-surface-variant">{f.trip_id ? `#${f.trip_id}` : '—'}</td>
+                    <td>{resolveVehicle(f.vehicle_id)}</td>
                     <td className="text-sm">{Number(f.liters).toFixed(2)} L</td>
                     <td className="text-sm font-semibold">{formatCurrency(Number(f.cost))}</td>
                   </tr>
@@ -288,12 +309,13 @@ export default function FuelExpensesPage() {
                 {tab === 'expenses' && (activeData?.items as any[]).map((e) => (
                   <tr key={e.id}>
                     <td className="text-sm text-on-surface-variant">{new Date(e.expense_date).toLocaleDateString()}</td>
-                    <td className="font-mono text-xs">#{e.vehicle_id}</td>
+                    <td>{resolveVehicle(e.vehicle_id)}</td>
                     <td>
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-surface-mid text-on-surface">
                         {e.category}
                       </span>
                     </td>
+                    <td className="font-mono text-xs text-on-surface-variant">{e.trip_id ? `#${e.trip_id}` : '—'}</td>
                     <td className="text-sm">{e.description || '—'}</td>
                     <td className="text-sm font-semibold">{formatCurrency(Number(e.amount))}</td>
                   </tr>
@@ -307,8 +329,8 @@ export default function FuelExpensesPage() {
           <div className="flex items-center justify-between px-4 py-3 border-t border-outline-variant">
             <p className="text-xs text-on-surface-variant">Page {page} of {totalPages}</p>
             <div className="flex gap-1">
-              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded border"><ChevronLeft className="w-4 h-4" /></button>
-              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded border"><ChevronRight className="w-4 h-4" /></button>
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded border border-outline-variant disabled:opacity-40 hover:bg-surface-mid"><ChevronLeft className="w-4 h-4" /></button>
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded border border-outline-variant disabled:opacity-40 hover:bg-surface-mid"><ChevronRight className="w-4 h-4" /></button>
             </div>
           </div>
         )}

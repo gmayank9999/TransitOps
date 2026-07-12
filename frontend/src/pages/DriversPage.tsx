@@ -122,10 +122,8 @@ function DriverModal({
               <label className="block text-xs font-medium text-on-surface-variant mb-1.5">License Number *</label>
               <input
                 {...register('license_number')}
-                readOnly={isEdit}
                 placeholder="e.g. DL-14-2021"
-                className={`w-full px-3 py-2 rounded-lg border text-sm outline-none font-mono
-                  ${isEdit ? 'bg-surface-mid text-on-surface-variant cursor-not-allowed' : 'bg-white'}
+                className={`w-full px-3 py-2 rounded-lg border text-sm outline-none font-mono bg-white
                   ${errors.license_number ? 'border-error' : 'border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary/30'}`}
               />
               {errors.license_number && <p className="mt-1 text-xs text-error">{errors.license_number.message}</p>}
@@ -240,7 +238,7 @@ export default function DriversPage() {
   })
 
   const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: DriverStatus }) => driversApi.updateStatus(id, status),
+    mutationFn: ({ id, status }: { id: number; status: DriverStatus }) => driversApi.toggleStatus(id, status),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['drivers'] })
       success('Status updated')

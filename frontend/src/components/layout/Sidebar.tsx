@@ -1,4 +1,3 @@
-import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Truck,
@@ -10,8 +9,11 @@ import {
   Settings,
   LogOut,
   ChevronRight,
+  Moon,
+  Sun,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { useSettings } from '@/context/SettingsContext'
 import type { UserRole } from '@/types'
 
 interface NavItem {
@@ -50,6 +52,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
 
 export default function Sidebar() {
   const { user, hasRole, logout } = useAuth()
+  const { settings, toggleTheme } = useSettings()
 
   const visibleItems = NAV_ITEMS.filter(
     (item) => !item.roles || (user && item.roles.includes(user.role))
@@ -120,6 +123,14 @@ export default function Sidebar() {
           >
             <LogOut className="w-4 h-4" />
             <span>Sign out</span>
+          </button>
+          <button
+            onClick={toggleTheme}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-on-surface-variant hover:bg-surface-mid transition-colors duration-150"
+            id="btn-theme-toggle"
+          >
+            {settings.theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            <span>{settings.theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
           </button>
         </div>
       )}
